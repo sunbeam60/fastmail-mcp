@@ -272,6 +272,57 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'save_draft',
+        description: 'Save an email as a draft without sending it. Supports threading headers for replies.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            to: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Recipient email addresses',
+            },
+            cc: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'CC email addresses (optional)',
+            },
+            bcc: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'BCC email addresses (optional)',
+            },
+            from: {
+              type: 'string',
+              description: 'Sender email address (optional, defaults to account primary email)',
+            },
+            subject: {
+              type: 'string',
+              description: 'Email subject',
+            },
+            textBody: {
+              type: 'string',
+              description: 'Plain text body (optional)',
+            },
+            htmlBody: {
+              type: 'string',
+              description: 'HTML body (optional)',
+            },
+            inReplyTo: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Message-IDs to reply to (optional, for threading)',
+            },
+            references: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Message-IDs for References header (optional, for threading)',
+            },
+          },
+          required: ['to', 'subject'],
+        },
+      },
+      {
         name: 'search_emails',
         description: 'Search emails by subject or content',
         inputSchema: {
@@ -920,6 +971,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: `Reply sent successfully. Submission ID: ${submissionId}`,
+            },
+          ],
+        };
+      }
+
+      case 'save_draft': {
+        const { to, cc, bcc, from, subject, textBody, htmlBody, inReplyTo, references } = args as any;
+        if (!to || !Array.isArray(to) || to.length === 0) {
+          throw new McpError(ErrorCode.InvalidParams, 'to field is required and must be a non-empty array');
+        }
+        if (!subject) {
+          throw new McpError(ErrorCode.InvalidParams, 'subject is required');
+        }
+        if (!textBody && !htmlBody) {
+          throw new McpError(ErrorCode.InvalidParams, 'Either textBody or htmlBody is required');
+        }
+
+        const draftId = await client.saveDraft({
+          to,
+          cc,
+          bcc,
+          from,
+          subject,
+          textBody,
+          htmlBody,
+          inReplyTo,
+          references,
+        });
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Draft saved successfully. Draft ID: ${draftId}`,
             },
           ],
         };
