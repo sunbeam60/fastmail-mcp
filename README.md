@@ -9,12 +9,12 @@ A Model Context Protocol (MCP) server that provides access to the Fastmail API, 
 - List, search, and filter emails with advanced criteria
 - Get specific emails by ID with full content
 - Send emails (text and HTML) with proper draft/sent handling
-- Email management: mark read/unread, delete, move between folders
+- Email management: mark read/unread, pin/unpin, delete, move between folders
 
 ### Advanced Email Features
 - **Attachment Handling**: List and download email attachments
 - **Threading Support**: Get complete conversation threads
-- **Advanced Search**: Multi-criteria filtering (sender, date range, attachments, read status)
+- **Advanced Search**: Multi-criteria filtering (sender, date range, attachments, read status, pinned status)
 - **Bulk Operations**: Process multiple emails simultaneously
 - **Statistics & Analytics**: Account summaries and mailbox statistics
 
@@ -152,6 +152,8 @@ You can install this server as a Desktop Extension for Claude Desktop using the 
   - Parameters: `limit` (default: 10, max: 50), `mailboxName` (default: 'inbox')
 - **mark_email_read**: Mark an email as read or unread
   - Parameters: `emailId` (required), `read` (default: true)
+- **pin_email**: Pin or unpin an email
+  - Parameters: `emailId` (required), `pinned` (default: true)
 - **delete_email**: Delete an email (move to trash)
   - Parameters: `emailId` (required)
 - **move_email**: Move an email to a different mailbox (replaces all mailboxes)
@@ -168,7 +170,7 @@ You can install this server as a Desktop Extension for Claude Desktop using the 
 - **download_attachment**: Download an email attachment. If savePath is provided, saves the file to disk and returns the file path and size. Otherwise returns a download URL.
   - Parameters: `emailId` (required), `attachmentId` (required), `savePath` (optional)
 - **advanced_search**: Advanced email search with multiple criteria
-  - Parameters: `query` (optional), `from` (optional), `to` (optional), `subject` (optional), `hasAttachment` (optional), `isUnread` (optional), `mailboxId` (optional), `after` (optional), `before` (optional), `limit` (default: 50)
+  - Parameters: `query` (optional), `from` (optional), `to` (optional), `subject` (optional), `hasAttachment` (optional), `isUnread` (optional), `isPinned` (optional — filter pinned emails), `mailboxId` (optional), `after` (optional), `before` (optional), `limit` (default: 50)
 - **get_thread**: Get all emails in a conversation thread
   - Parameters: `threadId` (required)
 
@@ -182,6 +184,8 @@ You can install this server as a Desktop Extension for Claude Desktop using the 
 
 - **bulk_mark_read**: Mark multiple emails as read/unread
   - Parameters: `emailIds` (required array), `read` (default: true)
+- **bulk_pin**: Pin or unpin multiple emails
+  - Parameters: `emailIds` (required array), `pinned` (default: true)
 - **bulk_move**: Move multiple emails to a mailbox
   - Parameters: `emailIds` (required array), `targetMailboxId` (required)
 - **bulk_delete**: Delete multiple emails (move to trash)

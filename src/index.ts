@@ -272,59 +272,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: 'save_draft',
-        description: 'Save an email as a draft without sending it. Supports threading headers for replies.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            to: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Recipient email addresses',
-            },
-            cc: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'CC email addresses (optional)',
-            },
-            bcc: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'BCC email addresses (optional)',
-            },
-            from: {
-              type: 'string',
-              description: 'Sender email address (optional, defaults to account primary email)',
-            },
-            subject: {
-              type: 'string',
-              description: 'Email subject',
-            },
-            textBody: {
-              type: 'string',
-              description: 'Plain text body (optional)',
-            },
-            htmlBody: {
-              type: 'string',
-              description: 'HTML body (optional)',
-            },
-            inReplyTo: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Message-IDs to reply to (optional, for threading)',
-            },
-            references: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Message-IDs for References header (optional, for threading)',
-            },
-          },
-          required: ['to', 'subject'],
-        },
-      },
-      {
         name: 'create_draft',
-        description: 'Create an email draft without sending it',
+        description: 'Create an email draft without sending it. Supports threading headers for reply drafts.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -362,6 +311,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             htmlBody: {
               type: 'string',
               description: 'HTML body (optional)',
+            },
+            inReplyTo: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Message-IDs to reply to (optional, for threading)',
+            },
+            references: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Message-IDs for References header (optional, for threading)',
             },
           },
         },
@@ -564,6 +523,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'pin_email',
+        description: 'Pin or unpin an email',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            emailId: {
+              type: 'string',
+              description: 'ID of the email to pin/unpin',
+            },
+            pinned: {
+              type: 'boolean',
+              description: 'true to pin, false to unpin',
+              default: true,
+            },
+          },
+          required: ['emailId'],
+        },
+      },
+      {
         name: 'delete_email',
         description: 'Delete an email (move to trash)',
         inputSchema: {
@@ -699,6 +677,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'boolean',
               description: 'Filter unread emails',
             },
+            isPinned: {
+              type: 'boolean',
+              description: 'Filter pinned emails',
+            },
             mailboxId: {
               type: 'string',
               description: 'Search within specific mailbox',
@@ -768,6 +750,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             read: {
               type: 'boolean',
               description: 'true to mark as read, false as unread',
+              default: true,
+            },
+          },
+          required: ['emailIds'],
+        },
+      },
+      {
+        name: 'bulk_pin',
+        description: 'Pin or unpin multiple emails',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            emailIds: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Array of email IDs to pin/unpin',
+            },
+            pinned: {
+              type: 'boolean',
+              description: 'true to pin, false to unpin',
               default: true,
             },
           },
@@ -1024,42 +1026,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      case 'save_draft': {
-        const { to, cc, bcc, from, subject, textBody, htmlBody, inReplyTo, references } = args as any;
-        if (!to || !Array.isArray(to) || to.length === 0) {
-          throw new McpError(ErrorCode.InvalidParams, 'to field is required and must be a non-empty array');
-        }
-        if (!subject) {
-          throw new McpError(ErrorCode.InvalidParams, 'subject is required');
-        }
-        if (!textBody && !htmlBody) {
-          throw new McpError(ErrorCode.InvalidParams, 'Either textBody or htmlBody is required');
-        }
-
-        const draftId = await client.saveDraft({
-          to,
-          cc,
-          bcc,
-          from,
-          subject,
-          textBody,
-          htmlBody,
-          inReplyTo,
-          references,
-        });
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Draft saved successfully. Draft ID: ${draftId}`,
-            },
-          ],
-        };
-      }
-
       case 'create_draft': {
-        const { to, cc, bcc, from, mailboxId, subject, textBody, htmlBody } = args as any;
+        const { to, cc, bcc, from, mailboxId, subject, textBody, htmlBody, inReplyTo, references } = args as any;
 
         if (!to?.length && !subject && !textBody && !htmlBody) {
           throw new McpError(ErrorCode.InvalidParams, 'At least one of to, subject, textBody, or htmlBody must be provided');
@@ -1074,6 +1042,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           subject,
           textBody,
           htmlBody,
+          inReplyTo,
+          references,
         });
 
         return {
@@ -1286,6 +1256,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'pin_email': {
+        const { emailId, pinned = true } = args as any;
+        if (!emailId) {
+          throw new McpError(ErrorCode.InvalidParams, 'emailId is required');
+        }
+        const client = initializeClient();
+        await client.pinEmail(emailId, pinned);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Email ${pinned ? 'pinned' : 'unpinned'} successfully`,
+            },
+          ],
+        };
+      }
+
       case 'delete_email': {
         const { emailId } = args as any;
         if (!emailId) {
@@ -1415,10 +1402,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'advanced_search': {
-        const { query, from, to, subject, hasAttachment, isUnread, mailboxId, after, before, limit } = args as any;
+        const { query, from, to, subject, hasAttachment, isUnread, isPinned, mailboxId, after, before, limit } = args as any;
         const client = initializeClient();
         const emails = await client.advancedSearch({
-          query, from, to, subject, hasAttachment, isUnread, mailboxId, after, before, limit
+          query, from, to, subject, hasAttachment, isUnread, isPinned, mailboxId, after, before, limit
         });
         return {
           content: [
@@ -1491,6 +1478,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: `${emailIds.length} emails ${read ? 'marked as read' : 'marked as unread'} successfully`,
+            },
+          ],
+        };
+      }
+
+      case 'bulk_pin': {
+        const { emailIds, pinned = true } = args as any;
+        if (!emailIds || !Array.isArray(emailIds) || emailIds.length === 0) {
+          throw new McpError(ErrorCode.InvalidParams, 'emailIds array is required and must not be empty');
+        }
+        const client = initializeClient();
+        await client.bulkPinEmails(emailIds, pinned);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `${emailIds.length} emails ${pinned ? 'pinned' : 'unpinned'} successfully`,
             },
           ],
         };
@@ -1582,10 +1586,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             available: true,
             functions: [
               'list_mailboxes', 'list_emails', 'get_email', 'send_email', 'create_draft', 'search_emails',
-              'get_recent_emails', 'mark_email_read', 'delete_email', 'move_email',
+              'get_recent_emails', 'mark_email_read', 'pin_email', 'delete_email', 'move_email',
               'add_labels', 'remove_labels', 'get_email_attachments', 'download_attachment',
               'advanced_search', 'get_thread', 'get_mailbox_stats', 'get_account_summary',
-              'bulk_mark_read', 'bulk_move', 'bulk_delete', 'bulk_add_labels', 'bulk_remove_labels'
+              'bulk_mark_read', 'bulk_pin', 'bulk_move', 'bulk_delete', 'bulk_add_labels', 'bulk_remove_labels'
             ]
           },
           identity: {

@@ -325,95 +325,6 @@ export class JmapClient {
     return submissionId;
   }
 
-  async saveDraft(email: {
-    to: string[];
-    cc?: string[];
-    bcc?: string[];
-    subject: string;
-    textBody?: string;
-    htmlBody?: string;
-    from?: string;
-    inReplyTo?: string[];
-    references?: string[];
-  }): Promise<string> {
-    const session = await this.getSession();
-
-    // Get all identities to validate from address
-    const identities = await this.getIdentities();
-    if (!identities || identities.length === 0) {
-      throw new Error('No sending identities found');
-    }
-
-    // Determine which identity to use
-    let selectedIdentity;
-    if (email.from) {
-      selectedIdentity = identities.find(id =>
-        id.email.toLowerCase() === email.from?.toLowerCase()
-      );
-      if (!selectedIdentity) {
-        throw new Error('From address is not verified for sending. Choose one of your verified identities.');
-      }
-    } else {
-      selectedIdentity = identities.find(id => id.mayDelete === false) || identities[0];
-    }
-
-    const fromEmail = selectedIdentity.email;
-
-    // Get the Drafts mailbox
-    const mailboxes = await this.getMailboxes();
-    const draftsMailbox = mailboxes.find(mb => mb.role === 'drafts') || mailboxes.find(mb => mb.name.toLowerCase().includes('draft'));
-
-    if (!draftsMailbox) {
-      throw new Error('Could not find Drafts mailbox');
-    }
-
-    // Ensure we have at least one body type
-    if (!email.textBody && !email.htmlBody) {
-      throw new Error('Either textBody or htmlBody must be provided');
-    }
-
-    const mailboxIds: Record<string, boolean> = {};
-    mailboxIds[draftsMailbox.id] = true;
-
-    const emailObject: any = {
-      mailboxIds,
-      keywords: { $draft: true },
-      from: [{ email: fromEmail }],
-      to: email.to.map(addr => ({ email: addr })),
-      cc: email.cc?.map(addr => ({ email: addr })) || [],
-      bcc: email.bcc?.map(addr => ({ email: addr })) || [],
-      subject: email.subject,
-      ...(email.inReplyTo && { inReplyTo: email.inReplyTo }),
-      ...(email.references && { references: email.references }),
-      textBody: email.textBody ? [{ partId: 'text', type: 'text/plain' }] : undefined,
-      htmlBody: email.htmlBody ? [{ partId: 'html', type: 'text/html' }] : undefined,
-      bodyValues: {
-        ...(email.textBody && { text: { value: email.textBody } }),
-        ...(email.htmlBody && { html: { value: email.htmlBody } })
-      }
-    };
-
-    const request: JmapRequest = {
-      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
-      methodCalls: [
-        ['Email/set', {
-          accountId: session.accountId,
-          create: { draft: emailObject }
-        }, 'createDraft']
-      ]
-    };
-
-    const response = await this.makeRequest(request);
-
-    // Check if draft creation was successful
-    const draftResult = response.methodResponses[0][1];
-    if (draftResult.notCreated && draftResult.notCreated.draft) {
-      throw new Error('Failed to create draft. Please check inputs and try again.');
-    }
-
-    return draftResult.created?.draft?.id || 'unknown';
-  }
-
   async createDraft(email: {
     to?: string[];
     cc?: string[];
@@ -423,6 +334,8 @@ export class JmapClient {
     htmlBody?: string;
     from?: string;
     mailboxId?: string;
+    inReplyTo?: string[];
+    references?: string[];
   }): Promise<string> {
     const session = await this.getSession();
 
@@ -477,6 +390,8 @@ export class JmapClient {
     if (email.cc?.length) emailObject.cc = email.cc.map(addr => ({ email: addr }));
     if (email.bcc?.length) emailObject.bcc = email.bcc.map(addr => ({ email: addr }));
     if (email.subject) emailObject.subject = email.subject;
+    if (email.inReplyTo) emailObject.inReplyTo = email.inReplyTo;
+    if (email.references) emailObject.references = email.references;
     if (email.textBody) emailObject.textBody = [{ partId: 'text', type: 'text/plain' }];
     if (email.htmlBody) emailObject.htmlBody = [{ partId: 'html', type: 'text/html' }];
     if (email.textBody || email.htmlBody) {
@@ -554,6 +469,32 @@ export class JmapClient {
 
     const response = await this.makeRequest(request);
     return response.methodResponses[1][1].list;
+  }
+
+  async pinEmail(emailId: string, pinned: boolean = true): Promise<void> {
+    const session = await this.getSession();
+
+    const update: Record<string, any> = {};
+    update[emailId] = pinned
+      ? { 'keywords/$flagged': true }
+      : { 'keywords/$flagged': null };
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          update
+        }, 'pinEmail']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notUpdated && result.notUpdated[emailId]) {
+      throw new Error(`Failed to ${pinned ? 'pin' : 'unpin'} email.`);
+    }
   }
 
   async markEmailRead(emailId: string, read: boolean = true): Promise<void> {
@@ -886,6 +827,7 @@ export class JmapClient {
     subject?: string;
     hasAttachment?: boolean;
     isUnread?: boolean;
+    isPinned?: boolean;
     mailboxId?: string;
     after?: string;
     before?: string;
@@ -901,15 +843,24 @@ export class JmapClient {
     if (filters.to) filter.to = filters.to;
     if (filters.subject) filter.subject = filters.subject;
     if (filters.hasAttachment !== undefined) filter.hasAttachment = filters.hasAttachment;
-    if (filters.isUnread !== undefined) filter.hasKeyword = filters.isUnread ? undefined : '$seen';
+    if (filters.isUnread === true) filter.notKeyword = '$seen';
+    else if (filters.isUnread === false) filter.hasKeyword = '$seen';
+    if (filters.isPinned === true) filter.hasKeyword = '$flagged';
+    if (filters.isPinned === false) filter.notKeyword = '$flagged';
     if (filters.mailboxId) filter.inMailbox = filters.mailboxId;
     if (filters.after) filter.after = filters.after;
     if (filters.before) filter.before = filters.before;
 
-    // If unread filter is specifically true, we need to check for absence of $seen
-    if (filters.isUnread === true) {
-      filter.notKeyword = '$seen';
+    // When both isUnread and isPinned are set, hasKeyword/notKeyword may conflict.
+    // JMAP FilterCondition only supports one hasKeyword, so wrap in an AND operator.
+    let finalFilter: any = filter;
+    if (filters.isUnread !== undefined && filters.isPinned !== undefined) {
       delete filter.hasKeyword;
+      delete filter.notKeyword;
+      const conditions: any[] = [filter];
+      conditions.push(filters.isUnread ? { notKeyword: '$seen' } : { hasKeyword: '$seen' });
+      conditions.push(filters.isPinned ? { hasKeyword: '$flagged' } : { notKeyword: '$flagged' });
+      finalFilter = { operator: 'AND', conditions };
     }
 
     const request: JmapRequest = {
@@ -917,7 +868,7 @@ export class JmapClient {
       methodCalls: [
         ['Email/query', {
           accountId: session.accountId,
-          filter,
+          filter: finalFilter,
           sort: [{ property: 'receivedAt', isAscending: false }],
           limit: Math.min(filters.limit || 50, 100)
         }, 'query'],
@@ -1050,6 +1001,34 @@ export class JmapClient {
     };
   }
 
+  async bulkPinEmails(emailIds: string[], pinned: boolean = true): Promise<void> {
+    const session = await this.getSession();
+
+    const updates: Record<string, any> = {};
+    emailIds.forEach(id => {
+      updates[id] = pinned
+        ? { 'keywords/$flagged': true }
+        : { 'keywords/$flagged': null };
+    });
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          update: updates
+        }, 'bulkFlag']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
+      throw new Error('Failed to pin/unpin some emails.');
+    }
+  }
+
   async bulkMarkRead(emailIds: string[], read: boolean = true): Promise<void> {
     const session = await this.getSession();
     
@@ -1160,128 +1139,6 @@ export class JmapClient {
 
     if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
       throw new Error('Failed to delete some emails.');
-    }
-  }
-
-  async addLabels(emailId: string, mailboxIds: string[]): Promise<void> {
-    const session = await this.getSession();
-
-    // Build patch object to add specific mailboxIds
-    const patch: Record<string, any> = {};
-    mailboxIds.forEach(mailboxId => {
-      patch[`mailboxIds/${mailboxId}`] = true;
-    });
-
-    const request: JmapRequest = {
-      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
-      methodCalls: [
-        ['Email/set', {
-          accountId: session.accountId,
-          update: {
-            [emailId]: patch
-          }
-        }, 'addLabels']
-      ]
-    };
-
-    const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-
-    if (result.notUpdated && result.notUpdated[emailId]) {
-      throw new Error('Failed to add labels to email.');
-    }
-  }
-
-  async removeLabels(emailId: string, mailboxIds: string[]): Promise<void> {
-    const session = await this.getSession();
-
-    // Build patch object to remove specific mailboxIds
-    const patch: Record<string, any> = {};
-    mailboxIds.forEach(mailboxId => {
-      patch[`mailboxIds/${mailboxId}`] = null;
-    });
-
-    const request: JmapRequest = {
-      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
-      methodCalls: [
-        ['Email/set', {
-          accountId: session.accountId,
-          update: {
-            [emailId]: patch
-          }
-        }, 'removeLabels']
-      ]
-    };
-
-    const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-
-    if (result.notUpdated && result.notUpdated[emailId]) {
-      throw new Error('Failed to remove labels from email.');
-    }
-  }
-
-  async bulkAddLabels(emailIds: string[], mailboxIds: string[]): Promise<void> {
-    const session = await this.getSession();
-
-    // Build patch object to add specific mailboxIds
-    const patch: Record<string, any> = {};
-    mailboxIds.forEach(mailboxId => {
-      patch[`mailboxIds/${mailboxId}`] = true;
-    });
-
-    const updates: Record<string, any> = {};
-    emailIds.forEach(id => {
-      updates[id] = patch;
-    });
-
-    const request: JmapRequest = {
-      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
-      methodCalls: [
-        ['Email/set', {
-          accountId: session.accountId,
-          update: updates
-        }, 'bulkAddLabels']
-      ]
-    };
-
-    const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-
-    if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
-      throw new Error('Failed to add labels to some emails.');
-    }
-  }
-
-  async bulkRemoveLabels(emailIds: string[], mailboxIds: string[]): Promise<void> {
-    const session = await this.getSession();
-
-    // Build patch object to remove specific mailboxIds
-    const patch: Record<string, any> = {};
-    mailboxIds.forEach(mailboxId => {
-      patch[`mailboxIds/${mailboxId}`] = null;
-    });
-
-    const updates: Record<string, any> = {};
-    emailIds.forEach(id => {
-      updates[id] = patch;
-    });
-
-    const request: JmapRequest = {
-      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
-      methodCalls: [
-        ['Email/set', {
-          accountId: session.accountId,
-          update: updates
-        }, 'bulkRemoveLabels']
-      ]
-    };
-
-    const response = await this.makeRequest(request);
-    const result = response.methodResponses[0][1];
-
-    if (result.notUpdated && Object.keys(result.notUpdated).length > 0) {
-      throw new Error('Failed to remove labels from some emails.');
     }
   }
 }
